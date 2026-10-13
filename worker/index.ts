@@ -30,6 +30,7 @@ const json = (body: unknown, status = 200) =>
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
+    if (env.SUPABASE_URL) env = { ...env, SUPABASE_URL: env.SUPABASE_URL.trim().replace(/\/+$/, '') };
     const url = new URL(req.url);
     try {
       if (url.pathname === '/api/checkout' && req.method === 'POST') return await checkout(req, env, url);
@@ -71,6 +72,7 @@ async function db<T>(env: Env, path: string, init: RequestInit = {}): Promise<T>
 
 /** Confirms the request comes from a signed-in practice owner and returns their practice. */
 async function ownerPractice(req: Request, env: Env): Promise<{ practice: Practice; email: string }> {
+  checkConfig(env);
   const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
   if (!token) throw new HttpError(401, 'Please log in again.');
   const userRes = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${token}` } });
@@ -88,13 +90,38 @@ class HttpError extends Error {
 
 /** Confirms the request comes from any signed-in esthetician (owner or staff). */
 async function requireMember(req: Request, env: Env): Promise<void> {
+  checkConfig(env);
   const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
   if (!token) throw new HttpError(401, 'Please log in again.');
-  const userRes = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${token}` } });
+  let userRes: Response;
+  try {
+    userRes = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${token}` } });
+  } catch {
+    throw new HttpError(500, 'Server setup: SUPABASE_URL in Cloudflare doesn’t look right. It should be your Project URL, like https://abcd.supabase.co');
+  }
+  if (userRes.status === 401 || userRes.status === 403) {
+    const text = await userRes.text();
+    if (/api ?key/i.test(text)) throw new HttpError(500, 'Server setup: SUPABASE_SERVICE_KEY in Cloudflare isn’t accepted. Use the legacy service_role key from Supabase.');
+    throw new HttpError(401, 'Please log in again.');
+  }
   if (!userRes.ok) throw new HttpError(401, 'Please log in again.');
   const user = (await userRes.json()) as { id: string };
-  const rows = await db<unknown[]>(env, `practice_members?user_id=eq.${encodeURIComponent(user.id)}&select=practice_id&limit=1`);
+  let rows: unknown[];
+  try {
+    rows = await db<unknown[]>(env, `practice_members?user_id=eq.${encodeURIComponent(user.id)}&select=practice_id&limit=1`);
+  } catch (e) {
+    console.error(e);
+    throw new HttpError(500, 'Server setup: the server couldn’t read the database. Check that SUPABASE_SERVICE_KEY in Cloudflare is the legacy service_role key.');
+  }
   if (!rows.length) throw new HttpError(403, 'Only estheticians can import products.');
+}
+
+function checkConfig(env: Env) {
+  const missing = (['SUPABASE_URL', 'SUPABASE_SERVICE_KEY'] as const).filter((k) => !env[k]);
+  if (missing.length) throw new HttpError(500, `Server setup: add ${missing.join(' and ')} as secrets in Cloudflare (Settings → Variables and Secrets), then redeploy.`);
+  if (!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(env.SUPABASE_URL.trim())) {
+    throw new HttpError(500, 'Server setup: SUPABASE_URL in Cloudflare should be just your Project URL, like https://abcd.supabase.co (nothing after .co).');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -114,15 +141,21 @@ async function shopifyProducts(req: Request, env: Env): Promise<Response> {
     if (!host) throw new HttpError(400, 'Enter your store address, like yourstore.com or yourstore.myshopify.com.');
     const out: { name: string; category: string | null; size: string | null; image_url: string | null; shop_url: string; handle: string }[] = [];
     for (let page = 1; page <= 4; page++) {
-      const res = await fetch(`https://${host}/products.json?limit=250&page=${page}`, {
-        headers: { accept: 'application/json', 'user-agent': 'Skinroom product import' },
-        redirect: 'follow',
-      });
-      if (!res.ok || !(res.headers.get('content-type') ?? '').includes('json')) {
+      let data: { products?: ShopifyProduct[] } | null = null;
+      try {
+        const res = await fetch(`https://${host}/products.json?limit=250&page=${page}`, {
+          headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (compatible; SkinroomImport/1.0)' },
+          redirect: 'follow',
+        });
+        if (res.ok && (res.headers.get('content-type') ?? '').includes('json')) data = await res.json();
+        else console.error('store fetch', host, res.status);
+      } catch (e) {
+        console.error('store fetch failed', host, e);
+      }
+      if (!data) {
         if (page === 1) throw new HttpError(422, 'We couldn’t read products from that store. It may not be a Shopify store, or it keeps its product list private. Try the spreadsheet import instead.');
         break;
       }
-      const data = (await res.json()) as { products?: ShopifyProduct[] };
       const list = data.products ?? [];
       for (const p of list) {
         const v = p.variants?.[0]?.title;

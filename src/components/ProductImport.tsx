@@ -41,8 +41,13 @@ export function ProductImport({ practice, existing, onClose, onImported }: {
         headers: { 'content-type': 'application/json', Authorization: `Bearer ${session?.access_token}` },
         body: JSON.stringify({ store: storeAddress }),
       });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error || 'Couldn’t read that store.');
+      let body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // Backup: some stores can be read straight from the browser.
+        const direct = await readStoreInBrowser(storeAddress);
+        if (direct) body = direct;
+        else throw new Error(body.error || 'Couldn’t read that store.');
+      }
       const list: ImportedProduct[] = (body.products as (Omit<ImportedProduct, 'key' | 'lasts_days'> & { handle: string })[]).map((p) => {
         const w = lastsWeeks?.[p.handle] ?? defaultWeeks;
         return { ...p, key: p.handle, lasts_days: w ? Math.round(w * 7) : null };
@@ -175,4 +180,30 @@ export function ProductImport({ practice, existing, onClose, onImported }: {
       )}
     </Modal>
   );
+}
+
+type RawShopify = { title: string; handle: string; product_type?: string; images?: { src: string }[]; variants?: { title?: string }[] };
+
+async function readStoreInBrowser(input: string): Promise<{ store: string; products: unknown[] } | null> {
+  let host: string;
+  try { host = new URL(/^https?:\/\//i.test(input.trim()) ? input.trim() : `https://${input.trim()}`).hostname.toLowerCase(); } catch { return null; }
+  try {
+    const res = await fetch(`https://${host}/products.json?limit=250`);
+    if (!res.ok) return null;
+    const data = (await res.json()) as { products?: RawShopify[] };
+    if (!data.products?.length) return null;
+    return {
+      store: host,
+      products: data.products.map((p) => {
+        const v = p.variants?.[0]?.title;
+        return {
+          name: p.title, handle: p.handle, category: p.product_type?.trim() || null,
+          size: v && v !== 'Default Title' ? v : null, image_url: p.images?.[0]?.src ?? null,
+          shop_url: `https://${host}/products/${encodeURIComponent(p.handle)}`,
+        };
+      }),
+    };
+  } catch {
+    return null; // store doesn't allow browser reads
+  }
 }

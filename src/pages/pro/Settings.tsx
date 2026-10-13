@@ -1,16 +1,29 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type CSSProperties, type FormEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import { usePractitioner, useSession } from '../../lib/session';
-import { ErrorBox } from '../../components/ui';
+import { brandVars, contrast, DEFAULT_COLORS, ErrorBox } from '../../components/ui';
 
-const SWATCHES = ['#1E5C57', '#3B3F7A', '#7A3A14', '#5B2A4E', '#2F4A2B', '#17201F'];
+type ColorKey = 'brand_color' | 'bg_color' | 'surface_color' | 'text_color';
+const COLOR_ROLES: { key: ColorKey; label: string; hint: string }[] = [
+  { key: 'brand_color', label: 'Buttons & highlights', hint: 'Buttons, your plan card, active tabs, links' },
+  { key: 'bg_color', label: 'Page background', hint: 'Behind everything' },
+  { key: 'surface_color', label: 'Cards & panels', hint: 'Boxes that hold content, the top bar' },
+  { key: 'text_color', label: 'Text', hint: 'Headings and body text' },
+];
+const HEX = /^#[0-9a-f]{6}$/i;
 
 export function Settings() {
   const { practice, role, refresh } = usePractitioner();
   const { session } = useSession();
+  const nav = useNavigate();
+  const [onboarding, setOnboarding] = useState(false);
   const [f, setF] = useState({
     name: practice.name,
     brand_color: practice.brand_color,
+    bg_color: practice.bg_color ?? DEFAULT_COLORS.bg_color,
+    surface_color: practice.surface_color ?? DEFAULT_COLORS.surface_color,
+    text_color: practice.text_color ?? DEFAULT_COLORS.text_color,
     checkin_every_days: practice.checkin_every_days,
     quiet_after_days: practice.quiet_after_days,
     send_reminders: practice.send_reminders,
@@ -25,11 +38,15 @@ export function Settings() {
 
   useEffect(() => {
     if (location.hash === '#plan') document.getElementById('plan')?.scrollIntoView();
-  }, []);
+    // Still setting up (no clients yet)? After saving, go back to the setup checklist.
+    supabase.from('clients').select('id', { count: 'exact', head: true }).eq('practice_id', practice.id)
+      .then(({ count }) => setOnboarding((count ?? 0) === 0));
+  }, [practice.id]);
 
   async function save(e: FormEvent) {
     e.preventDefault();
-    if (!/^#[0-9a-f]{6}$/i.test(f.brand_color)) return setError('Brand color needs to be a 6-digit hex like #1E5C57.');
+    const bad = COLOR_ROLES.find((r) => !HEX.test(f[r.key]));
+    if (bad) return setError(`${bad.label} color needs to be a 6-digit code like #1E5C57.`);
     setBusy(true);
     setError(null);
     const { error } = await supabase.from('practices').update({
@@ -43,6 +60,7 @@ export function Settings() {
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
     await refresh();
+    if (onboarding) nav('/app', { state: { saved: 'Branding saved' } });
   }
 
   async function uploadLogo(file: File) {
@@ -71,6 +89,14 @@ export function Settings() {
     }
   }
 
+  const allHex = COLOR_ROLES.every((r) => HEX.test(f[r.key]));
+  const contrastWarnings = !allHex ? [] : [
+    contrast(f.text_color, f.bg_color) < 4.5 && 'Your text color is hard to read on your page background.',
+    contrast(f.text_color, f.surface_color) < 4.5 && 'Your text color is hard to read on your cards.',
+    contrast('#FFFFFF', f.brand_color) < 3 && 'White button text is hard to read on your button color. Try a deeper shade.',
+  ].filter(Boolean) as string[];
+  const preview = allHex ? brandVars(f) : brandVars(practice);
+
   const trialDays = Math.ceil((new Date(practice.trial_ends_at).getTime() - Date.now()) / 86400000);
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF({ ...f, [k]: v });
 
@@ -86,7 +112,7 @@ export function Settings() {
         <div className="main">
           <section className="card stack">
             <h2>Your brand</h2>
-            <p className="small muted" style={{ margin: 0 }}>Clients see your name, logo, and color. Skinroom stays in the background.</p>
+            <p className="small muted" style={{ margin: 0 }}>Clients see your name, logo, and colors. Tap a circle to pick a color, or type a color code. The preview updates as you go.</p>
             <label className="field"><span>Practice name</span><input required value={f.name} onChange={(e) => set('name', e.target.value)} disabled={!isOwner} /></label>
             <div className="field">
               <span>Logo</span>
@@ -102,18 +128,33 @@ export function Settings() {
               </div>
             </div>
             <div className="field">
-              <span>Brand color</span>
-              <div className="row">
-                {SWATCHES.map((c) => (
-                  <button key={c} type="button" aria-label={`Use ${c}`} aria-pressed={f.brand_color.toLowerCase() === c.toLowerCase()} disabled={!isOwner}
-                    onClick={() => set('brand_color', c)}
-                    style={{ width: 44, height: 44, borderRadius: 999, background: c, border: '2px solid #fff', cursor: 'pointer',
-                      boxShadow: f.brand_color.toLowerCase() === c.toLowerCase() ? '0 0 0 2px var(--ink)' : '0 0 0 1px var(--line)' }} />
+              <span>Colors</span>
+              <div className="stack" style={{ gap: 8 }}>
+                {COLOR_ROLES.map((r) => (
+                  <div key={r.key} className="between" style={{ padding: '8px 0', borderTop: '1px solid var(--line-soft)' }}>
+                    <div className="row" style={{ flexWrap: 'nowrap' }}>
+                      <label style={{ position: 'relative', width: 44, height: 44, flex: 'none', cursor: isOwner ? 'pointer' : 'default' }}>
+                        <span aria-hidden="true" style={{ display: 'block', width: 44, height: 44, borderRadius: 999, background: HEX.test(f[r.key]) ? f[r.key] : '#fff', boxShadow: '0 0 0 1px var(--line), inset 0 0 0 2px #fff' }} />
+                        <input type="color" aria-label={`Pick ${r.label} color`} value={HEX.test(f[r.key]) ? f[r.key] : '#000000'} disabled={!isOwner}
+                          onChange={(e) => set(r.key, e.target.value.toUpperCase())}
+                          style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'inherit' }} />
+                      </label>
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: 14 }}>{r.label}</div>
+                        <div className="small muted">{r.hint}</div>
+                      </div>
+                    </div>
+                    <div className="row" style={{ flexWrap: 'nowrap' }}>
+                      <input className="input" style={{ width: 110 }} aria-label={`${r.label} color code`} value={f[r.key]} disabled={!isOwner}
+                        onChange={(e) => set(r.key, e.target.value.startsWith('#') ? e.target.value : `#${e.target.value}`)} />
+                      {f[r.key].toLowerCase() !== DEFAULT_COLORS[r.key].toLowerCase() && isOwner && (
+                        <button type="button" className="btn link small" onClick={() => set(r.key, DEFAULT_COLORS[r.key])}>Reset</button>
+                      )}
+                    </div>
+                  </div>
                 ))}
-                <label className="row small"><span className="muted">Custom</span>
-                  <input className="input" style={{ width: 120 }} value={f.brand_color} onChange={(e) => set('brand_color', e.target.value)} disabled={!isOwner} />
-                </label>
               </div>
+              {contrastWarnings.map((w) => <div key={w} className="card tight warn small">{w}</div>)}
             </div>
           </section>
 
@@ -146,12 +187,19 @@ export function Settings() {
         <aside className="side">
           <section className="card stack" style={{ alignItems: 'center' }}>
             <span className="small" style={{ fontWeight: 600, alignSelf: 'flex-start' }}>Client app preview</span>
-            <div style={{ width: 220, border: '8px solid var(--ink)', borderRadius: 28, overflow: 'hidden', background: 'var(--ground)' }}>
-              <div style={{ padding: 12, background: '#fff', fontWeight: 700, fontSize: 13 }}>{f.name || 'Your practice'}<div style={{ fontSize: 10, fontWeight: 400, color: 'var(--muted)' }}>Powered by Skinroom</div></div>
+            <div style={{ ...(preview as CSSProperties), width: 220, border: '8px solid #17201F', borderRadius: 28, overflow: 'hidden', background: 'var(--ground)', color: 'var(--ink)' }}>
+              <div style={{ padding: 12, background: 'var(--surface)', fontWeight: 700, fontSize: 13, borderBottom: '1px solid var(--line)' }}>
+                {f.name || 'Your practice'}<div style={{ fontSize: 10, fontWeight: 400, color: 'var(--muted)' }}>Powered by Skinroom</div>
+              </div>
               <div style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ background: /^#[0-9a-f]{6}$/i.test(f.brand_color) ? f.brand_color : 'var(--accent)', color: '#fff', borderRadius: 10, padding: 10, fontSize: 12, fontWeight: 600 }}>Correct · month 2</div>
-                <div style={{ background: '#fff', borderRadius: 10, height: 48 }} />
-                <div style={{ background: '#fff', borderRadius: 10, height: 72 }} />
+                <div style={{ fontWeight: 700, fontSize: 14 }}>Hi Jordan</div>
+                <div style={{ background: 'var(--accent)', color: '#fff', borderRadius: 10, padding: 10, fontSize: 12, fontWeight: 600 }}>Correct · phase 3 of 4</div>
+                <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 10, padding: 10, fontSize: 11 }}>
+                  <div style={{ fontWeight: 700, marginBottom: 4 }}>Tonight</div>
+                  <div style={{ color: 'var(--muted)' }}>Gentle cleanser</div>
+                  <div style={{ color: 'var(--muted)' }}>Barrier cream</div>
+                </div>
+                <div style={{ background: 'var(--accent)', color: '#fff', borderRadius: 8, padding: '8px 10px', fontSize: 11, fontWeight: 700, textAlign: 'center' }}>Send check-in</div>
               </div>
             </div>
           </section>

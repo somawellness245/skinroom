@@ -9,7 +9,7 @@ Plan on about an hour. Anything marked *later* can wait until you're ready to ch
 ## 1. Supabase (database, logins, photo storage)
 
 1. Go to supabase.com and create a new project called **skinroom**. Save the database password somewhere safe.
-2. Open **SQL Editor**, start a new query, paste the whole file `supabase/migrations/0001_schema.sql`, and click **Run**. It should finish with "Success". This creates every table, the privacy rules, and the photo storage.
+2. Open **SQL Editor**, start a new query, paste the whole file `supabase/migrations/0001_schema.sql`, and click **Run**. It should finish with "Success". This creates every table, the privacy rules, and the photo storage. Then do the same with `0002_colors_and_trial.sql` (and any later numbered files, in order).
 3. Go to **Authentication → URL Configuration**:
    - **Site URL**: your Skinroom web address (for example `https://skinroom.app`). Before you have a domain, use the Cloudflare address from step 3.
    - **Redirect URLs**: add `https://YOUR-ADDRESS/**`
@@ -41,7 +41,7 @@ Plan on about an hour. Anything marked *later* can wait until you're ready to ch
 
 ## 4. Stripe (billing), *later*
 
-Everyone gets a 60-day free trial automatically, so you can skip this until you're ready to charge.
+Everyone gets a 7-day free trial automatically, so you can skip this until you're ready to charge.
 
 1. In Stripe, create a product **Skinroom: Founding member** with a monthly recurring price. Copy the price ID (starts with `price_`).
 2. **Settings → Billing → Customer portal**: turn it on so estheticians can update their card or cancel themselves.

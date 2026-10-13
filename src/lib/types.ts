@@ -3,6 +3,9 @@ export type Practice = {
   name: string;
   logo_url: string | null;
   brand_color: string;
+  bg_color: string;
+  surface_color: string;
+  text_color: string;
   checkin_every_days: number;
   quiet_after_days: number;
   send_reminders: boolean;

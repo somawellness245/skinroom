@@ -18,7 +18,9 @@ alter default privileges in schema public grant execute on functions to anon, au
 grant all on storage.objects to authenticated;
 `;
 await db.exec(stub);
-await db.exec(readFileSync(new URL("../migrations/0001_schema.sql", import.meta.url), "utf8"));
+import { readdirSync } from 'node:fs';
+const migDir = new URL("../migrations/", import.meta.url);
+for (const f of readdirSync(migDir).filter((n) => n.endsWith(".sql")).sort()) await db.exec(readFileSync(new URL(f, migDir), "utf8"));
 
 const U = {
   ana: '11111111-1111-1111-1111-111111111111',  // esthetician A
@@ -178,6 +180,16 @@ await expect('client sees only published lessons', async () => {
   const r = await as(U.cal, 'select title from lessons'); return r.rows.length === 1 && r.rows[0].title === 'Pub';
 });
 await expect('other practice client sees no lessons', async () => (await as(U.dee, 'select * from lessons')).rows.length === 0);
+
+await expect('new practices get a 7-day trial', async () => {
+  const r = await as(U.ana, `select extract(day from trial_ends_at - created_at) as d from practices where id=$1`, [pA]); return Number(r.rows[0].d) === 7;
+});
+await expect('owner can set background, card and text colors', async () =>
+  (await as(U.ana, `update practices set bg_color='#FAF7F2', surface_color='#FFFFFF', text_color='#2B2321' where id=$1 returning id`, [pA])).rows.length === 1);
+await throws('colors must be valid codes', () => as(U.ana, `update practices set bg_color='red' where id=$1`, [pA]));
+await expect('invite page shows practice colors', async () => {
+  const r = await as(null, 'select bg_color from invite_preview($1)', [cB.invite_code]); return r.rows[0].bg_color === '#F4F6F5';
+});
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

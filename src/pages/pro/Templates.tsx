@@ -21,6 +21,9 @@ export function Templates() {
     return { templates, phases, uses };
   }, [practice.id]);
   const [selected, setSelected] = useState<string | null>(null);
+  useEffect(() => {
+    try { localStorage.setItem(`skinroom:templates-seen:${practice.id}`, '1'); } catch { /* storage unavailable */ }
+  }, [practice.id]);
 
   useEffect(() => {
     if (data && (!selected || !data.templates.some((t) => t.id === selected))) setSelected(data.templates[0]?.id ?? null);

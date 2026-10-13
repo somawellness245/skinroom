@@ -31,7 +31,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const uid = s.user.id;
     const { data: mem } = await supabase
       .from('practice_members')
-      .select('role, practice:practices(id, name, logo_url, brand_color, checkin_every_days, quiet_after_days, send_reminders, booking_url, shop_url, subscription_status, trial_ends_at)')
+      .select('role, practice:practices(id, name, logo_url, brand_color, bg_color, surface_color, text_color, checkin_every_days, quiet_after_days, send_reminders, booking_url, shop_url, subscription_status, trial_ends_at)')
       .eq('user_id', uid)
       .limit(1)
       .maybeSingle();
@@ -41,7 +41,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
     const { data: cl } = await supabase
       .from('clients')
-      .select('*, practice:practices(id, name, logo_url, brand_color, checkin_every_days, quiet_after_days, send_reminders, booking_url, shop_url, subscription_status, trial_ends_at)')
+      .select('*, practice:practices(id, name, logo_url, brand_color, bg_color, surface_color, text_color, checkin_every_days, quiet_after_days, send_reminders, booking_url, shop_url, subscription_status, trial_ends_at)')
       .eq('user_id', uid)
       .eq('archived', false)
       .order('created_at', { ascending: false })

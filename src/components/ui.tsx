@@ -1,19 +1,56 @@
 import { useEffect, type ReactNode } from 'react';
 import type { Phase, Practice } from '../lib/types';
 
-/** Applies the practice's brand color across the app. */
-export function useBrand(practice: Pick<Practice, 'brand_color'> | null | undefined) {
-  useEffect(() => {
-    const root = document.documentElement;
-    const hex = practice?.brand_color && /^#[0-9a-f]{6}$/i.test(practice.brand_color) ? practice.brand_color : '#1E5C57';
-    root.style.setProperty('--accent', hex);
-    root.style.setProperty('--accent-ink', mix(hex, '#000000', 0.35));
-    root.style.setProperty('--accent-soft', mix(hex, '#FFFFFF', 0.87));
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', hex);
-  }, [practice?.brand_color]);
+export type BrandColors = { brand_color: string; bg_color?: string; surface_color?: string; text_color?: string };
+
+export const DEFAULT_COLORS = { brand_color: '#1E5C57', bg_color: '#F4F6F5', surface_color: '#FFFFFF', text_color: '#17201F' };
+
+const isHex = (s: string | undefined | null): s is string => !!s && /^#[0-9a-f]{6}$/i.test(s);
+
+/** Turns the practice's four colors into the full set of shades the app uses. */
+export function brandVars(c: Partial<BrandColors> | null | undefined): Record<string, string> {
+  const accent = isHex(c?.brand_color) ? c!.brand_color! : DEFAULT_COLORS.brand_color;
+  const bg = isHex(c?.bg_color) ? c!.bg_color! : DEFAULT_COLORS.bg_color;
+  const surface = isHex(c?.surface_color) ? c!.surface_color! : DEFAULT_COLORS.surface_color;
+  const ink = isHex(c?.text_color) ? c!.text_color! : DEFAULT_COLORS.text_color;
+  return {
+    '--accent': accent,
+    '--accent-ink': mix(accent, '#000000', 0.35),
+    '--accent-soft': mix(accent, surface, 0.87),
+    '--ground': bg,
+    '--surface': surface,
+    '--ink': ink,
+    '--muted': mix(ink, surface, 0.32),
+    '--line': mix(ink, surface, 0.84),
+    '--line-soft': mix(ink, surface, 0.92),
+  };
 }
 
-function mix(a: string, b: string, t: number): string {
+/** Applies the practice's colors across the app. */
+export function useBrand(practice: Partial<BrandColors> | null | undefined) {
+  const key = [practice?.brand_color, practice?.bg_color, practice?.surface_color, practice?.text_color].join();
+  useEffect(() => {
+    const root = document.documentElement;
+    for (const [k, v] of Object.entries(brandVars(practice))) root.style.setProperty(k, v);
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', brandVars(practice)['--accent']);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+}
+
+/** WCAG contrast ratio between two hex colors (1–21). */
+export function contrast(a: string, b: string): number {
+  const lum = (h: string) => {
+    const [r, g, bl] = [1, 3, 5].map((i) => {
+      const v = parseInt(h.slice(i, i + 2), 16) / 255;
+      return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+  };
+  const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m);
+  return (x + 0.05) / (y + 0.05);
+}
+
+export function mix(a: string, b: string, t: number): string {
   const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16));
   const pb = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16));
   return '#' + pa.map((v, i) => Math.round(v + (pb[i] - v) * t).toString(16).padStart(2, '0')).join('');

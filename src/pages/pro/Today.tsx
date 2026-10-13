@@ -1,12 +1,12 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { supabase, must, photoUrls } from '../../lib/supabase';
 import { usePractitioner } from '../../lib/session';
 import { useLoad } from '../../lib/useLoad';
 import { loadClientRows, loadPhases, loadTemplates, phaseLabel, reordersFor } from '../../lib/queries';
 import { daysSince, fmtDate, fmtDue, fmtRelative, parseDate, today } from '../../lib/dates';
 import type { Checkin, Photo, Product, RegimenStep } from '../../lib/types';
-import { clientName, ErrorBox, initials, Loading } from '../../components/ui';
+import { clientName, DEFAULT_COLORS, ErrorBox, Icon, initials, Loading } from '../../components/ui';
 import { PhotoTile } from '../../components/PhotoTile';
 import { AddClient } from '../../components/AddClient';
 
@@ -14,6 +14,8 @@ export function Today() {
   const { practice } = usePractitioner();
   const [adding, setAdding] = useState(false);
   const [nudged, setNudged] = useState<Set<string>>(new Set());
+  const loc = useLocation();
+  const flash = (loc.state as { saved?: string } | null)?.saved;
   const { data, error, loading, reload } = useLoad(async () => {
     const [rows, pending, steps, products, phases, templates] = await Promise.all([
       loadClientRows(practice),
@@ -49,16 +51,39 @@ export function Today() {
   const greeting = parseDate(today()).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
 
   if (data.rows.length === 0) {
+    const brandDone = !!practice.logo_url || practice.brand_color.toLowerCase() !== DEFAULT_COLORS.brand_color.toLowerCase()
+      || (practice.bg_color ?? '').toLowerCase() !== DEFAULT_COLORS.bg_color.toLowerCase();
+    let templatesDone = false;
+    try { templatesDone = localStorage.getItem(`skinroom:templates-seen:${practice.id}`) === '1'; } catch { /* storage unavailable */ }
+    const steps = [
+      { done: brandDone, to: '/app/settings', title: 'Add your logo and colors', why: 'so clients see your practice, not ours.' },
+      { done: templatesDone, to: '/app/templates', title: 'Check your plan template', why: 'We started you with Reset → Prep → Correct → Maintain. Edit it to match how you work.' },
+      { done: data.products.some((p) => p.active), to: '/app/products', title: 'Add the products you recommend', why: 'and how long each lasts, so reorder reminders work.' },
+    ];
+    const left = steps.filter((x) => !x.done).length;
     return (
       <>
         <div><div className="muted small">{greeting}</div><h1>Welcome to your Skinroom</h1></div>
+        {flash && <div className="notice" role="status">{flash}. {left ? `${left} more step${left === 1 ? '' : 's'} to go.` : 'You’re ready for your first client.'}</div>}
         <section className="card stack-lg">
-          <h2>Get set up in three steps</h2>
-          <ol className="stack" style={{ margin: 0, paddingLeft: 20 }}>
-            <li><Link to="/app/settings">Add your logo and brand color</Link> so clients see your practice, not ours.</li>
-            <li><Link to="/app/templates">Check your plan template.</Link> We started you with Reset → Prep → Correct → Maintain. Edit it to match how you work.</li>
-            <li><Link to="/app/products">Add the products you recommend</Link> and how long each lasts, so reorder reminders work.</li>
-          </ol>
+          <div className="between"><h2>Get set up</h2><span className="small muted">{steps.length - left} of {steps.length} done</span></div>
+          <div className="list">
+            {steps.map((st) => (
+              <Link key={st.to} to={st.to} className="between" style={{ textDecoration: 'none', color: 'var(--ink)' }}>
+                <span className="row" style={{ flexWrap: 'nowrap', alignItems: 'flex-start' }}>
+                  <span className="avatar" style={{ width: 32, height: 32, ...(st.done ? { background: 'var(--accent)', color: '#fff' } : { background: 'var(--surface)', border: '2px solid var(--line)' }) }} aria-hidden="true">
+                    {st.done && <Icon name="check" size={18} />}
+                  </span>
+                  <span>
+                    <span style={{ fontWeight: 600, textDecoration: st.done ? 'line-through' : undefined }}>{st.title}</span>{' '}
+                    <span className="muted">{st.why}</span>
+                    <span className="sr">{st.done ? ' (done)' : ' (to do)'}</span>
+                  </span>
+                </span>
+                <span className="small" style={{ color: 'var(--accent)', fontWeight: 600, whiteSpace: 'nowrap' }}>{st.done ? 'Edit' : 'Start'} →</span>
+              </Link>
+            ))}
+          </div>
           <div><button className="btn primary lg" onClick={() => setAdding(true)}>Add your first client</button></div>
         </section>
         {adding && <AddClient practice={practice} templates={data.templates} phases={data.phases} onClose={() => setAdding(false)} onAdded={reload} />}

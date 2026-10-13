@@ -4,6 +4,7 @@
  *  - /api/checkout        start a Stripe subscription for the signed-in owner's practice
  *  - /api/portal          open Stripe's billing page for that practice
  *  - /api/stripe-webhook  Stripe tells us when a subscription starts, changes or ends
+ *  - /api/shopify-products  read a Shopify store's public product list for the product shelf import
  *  - daily cron           emails clients whose check-in is coming up (if email is set up)
  */
 
@@ -34,6 +35,7 @@ export default {
       if (url.pathname === '/api/checkout' && req.method === 'POST') return await checkout(req, env, url);
       if (url.pathname === '/api/portal' && req.method === 'POST') return await portal(req, env, url);
       if (url.pathname === '/api/stripe-webhook' && req.method === 'POST') return await stripeWebhook(req, env);
+      if (url.pathname === '/api/shopify-products' && req.method === 'POST') return await shopifyProducts(req, env);
       if (url.pathname.startsWith('/api/')) return json({ error: 'Not found' }, 404);
     } catch (e) {
       console.error(e);
@@ -82,6 +84,76 @@ async function ownerPractice(req: Request, env: Env): Promise<{ practice: Practi
 
 class HttpError extends Error {
   constructor(public status: number, message: string) { super(message); }
+}
+
+/** Confirms the request comes from any signed-in esthetician (owner or staff). */
+async function requireMember(req: Request, env: Env): Promise<void> {
+  const token = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
+  if (!token) throw new HttpError(401, 'Please log in again.');
+  const userRes = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, { headers: { apikey: env.SUPABASE_SERVICE_KEY, Authorization: `Bearer ${token}` } });
+  if (!userRes.ok) throw new HttpError(401, 'Please log in again.');
+  const user = (await userRes.json()) as { id: string };
+  const rows = await db<unknown[]>(env, `practice_members?user_id=eq.${encodeURIComponent(user.id)}&select=practice_id&limit=1`);
+  if (!rows.length) throw new HttpError(403, 'Only estheticians can import products.');
+}
+
+// ---------------------------------------------------------------------------
+// Shopify product import (public /products.json, no keys needed)
+// ---------------------------------------------------------------------------
+
+type ShopifyProduct = {
+  title: string; handle: string; product_type?: string; vendor?: string;
+  images?: { src: string }[]; variants?: { title?: string }[];
+};
+
+async function shopifyProducts(req: Request, env: Env): Promise<Response> {
+  try {
+    await requireMember(req, env);
+    const body = (await req.json().catch(() => ({}))) as { store?: string };
+    const host = cleanStoreHost(body.store ?? '');
+    if (!host) throw new HttpError(400, 'Enter your store address, like yourstore.com or yourstore.myshopify.com.');
+    const out: { name: string; category: string | null; size: string | null; image_url: string | null; shop_url: string; handle: string }[] = [];
+    for (let page = 1; page <= 4; page++) {
+      const res = await fetch(`https://${host}/products.json?limit=250&page=${page}`, {
+        headers: { accept: 'application/json', 'user-agent': 'Skinroom product import' },
+        redirect: 'follow',
+      });
+      if (!res.ok || !(res.headers.get('content-type') ?? '').includes('json')) {
+        if (page === 1) throw new HttpError(422, 'We couldn’t read products from that store. It may not be a Shopify store, or it keeps its product list private. Try the spreadsheet import instead.');
+        break;
+      }
+      const data = (await res.json()) as { products?: ShopifyProduct[] };
+      const list = data.products ?? [];
+      for (const p of list) {
+        const v = p.variants?.[0]?.title;
+        out.push({
+          name: p.title.slice(0, 200),
+          category: p.product_type?.trim() || null,
+          size: v && v !== 'Default Title' ? v.slice(0, 60) : null,
+          image_url: p.images?.[0]?.src ?? null,
+          shop_url: `https://${host}/products/${encodeURIComponent(p.handle)}`,
+          handle: p.handle,
+        });
+      }
+      if (list.length < 250) break;
+    }
+    return json({ store: host, products: out });
+  } catch (e) {
+    if (e instanceof HttpError) return json({ error: e.message }, e.status);
+    throw e;
+  }
+}
+
+/** Accepts "store.com", "https://store.com/collections/x" etc. Rejects anything that isn't a public hostname. */
+function cleanStoreHost(input: string): string | null {
+  let raw = input.trim().toLowerCase();
+  if (!raw) return null;
+  if (!/^https?:\/\//.test(raw)) raw = `https://${raw}`;
+  let host: string;
+  try { host = new URL(raw).hostname; } catch { return null; }
+  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(host)) return null; // no IPs, no localhost
+  if (host.endsWith('.local') || host.endsWith('.internal')) return null;
+  return host;
 }
 
 // ---------------------------------------------------------------------------

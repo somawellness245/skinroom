@@ -5,10 +5,14 @@ import { usePractitioner } from '../../lib/session';
 import { useLoad } from '../../lib/useLoad';
 import type { Product } from '../../lib/types';
 import { ErrorBox, Loading, Modal } from '../../components/ui';
+import { ProductImport } from '../../components/ProductImport';
 
 export function Products() {
   const { practice } = usePractitioner();
   const [editing, setEditing] = useState<Partial<Product> | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [timing, setTiming] = useState(false);
+  const [flash, setFlash] = useState<string | null>(null);
   const { data, error, loading, reload } = useLoad(async () => {
     const [p, s] = await Promise.all([
       supabase.from('products').select('*').eq('practice_id', practice.id).eq('active', true).order('name'),
@@ -23,8 +27,18 @@ export function Products() {
     <>
       <div className="between" style={{ alignItems: 'flex-end' }}>
         <div><h1>Product shelf</h1><div className="muted">The products you recommend. Add them to client routines in one tap.</div></div>
-        <button className="btn primary" onClick={() => setEditing({})}>+ Add product</button>
+        <div className="row">
+          <button className="btn" onClick={() => setImporting(true)} disabled={!data}>Import products</button>
+          <button className="btn primary" onClick={() => setEditing({})}>+ Add product</button>
+        </div>
       </div>
+      {flash && <div className="notice" role="status">{flash}</div>}
+      {data && data.products.some((p) => !p.lasts_days) && (
+        <div className="card tight warn between">
+          <span>{data.products.filter((p) => !p.lasts_days).length} products don’t have a “lasts about” time yet, so they won’t trigger reorder reminders.</span>
+          <button className="btn warn" onClick={() => setTiming(true)}>Set times</button>
+        </div>
+      )}
       <div className="notice between">
         <span><strong>Reorder reminders run on their own.</strong> Set how long each product lasts, and clients get a “running low” prompt with your shop link before they run out.</span>
         {!practice.shop_url && <Link to="/app/settings" className="btn soft">Add your shop link</Link>}
@@ -42,6 +56,14 @@ export function Products() {
           ))}
           <button type="button" className="card tight" style={{ minHeight: 220, border: '1px dashed #B9C4C1', fontWeight: 600, cursor: 'pointer' }} onClick={() => setEditing({})}>+ Add product</button>
         </div>
+      )}
+      {importing && data && (
+        <ProductImport practice={practice} existing={data.products} onClose={() => setImporting(false)}
+          onImported={async (n) => { setImporting(false); setFlash(`Added ${n} product${n === 1 ? '' : 's'} to your shelf.`); await reload(); }} />
+      )}
+      {timing && data && (
+        <LastsEditor products={data.products.filter((p) => !p.lasts_days)} onClose={() => setTiming(false)}
+          onSaved={async () => { setTiming(false); await reload(); }} />
       )}
       {editing && <ProductForm product={editing} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await reload(); }} />}
     </>
@@ -111,6 +133,45 @@ function ProductForm({ product, onClose, onSaved }: { product: Partial<Product>;
         <button className="btn primary lg" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save product'}</button>
         {product.id && <button className="btn danger" onClick={remove}>Remove</button>}
       </div>
+    </Modal>
+  );
+}
+
+/** Fill in "lasts about" for many products at once. */
+function LastsEditor({ products, onClose, onSaved }: { products: Product[]; onClose: () => void; onSaved: () => Promise<void> }) {
+  const [weeks, setWeeks] = useState<Record<string, string>>({});
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    const updates = Object.entries(weeks).map(([id, w]) => [id, Number(w)] as const).filter(([, w]) => w > 0 && w <= 104);
+    if (!updates.length) return onClose();
+    setBusy(true);
+    for (const [id, w] of updates) {
+      const { error } = await supabase.from('products').update({ lasts_days: Math.round(w * 7) }).eq('id', id);
+      if (error) { setBusy(false); return setError(error.message); }
+    }
+    setBusy(false);
+    await onSaved();
+  }
+
+  return (
+    <Modal title="How long does each product last?" onClose={onClose}>
+      <p className="small muted" style={{ margin: 0 }}>Weeks of daily use from one bottle or jar. Leave blank to skip.</p>
+      <ErrorBox error={error} />
+      <div style={{ maxHeight: 420, overflowY: 'auto' }} className="list">
+        {products.map((p) => (
+          <label key={p.id} className="between">
+            <span className="grow">{p.name}{p.size && <span className="muted small"> · {p.size}</span>}</span>
+            <span className="row" style={{ flexWrap: 'nowrap' }}>
+              <input className="input" type="number" min={1} max={104} style={{ width: 80 }} aria-label={`Weeks for ${p.name}`}
+                value={weeks[p.id] ?? ''} onChange={(e) => setWeeks({ ...weeks, [p.id]: e.target.value })} />
+              <span className="small muted">wks</span>
+            </span>
+          </label>
+        ))}
+      </div>
+      <button className="btn primary lg" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save times'}</button>
     </Modal>
   );
 }

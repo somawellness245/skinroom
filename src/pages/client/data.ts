@@ -21,7 +21,8 @@ export async function loadClientWorld(client: Client) {
     checkins: must(checkins) as Checkin[],
     photos: must(photos) as Photo[],
     lastNote: (must(messages) as Message[])[0] ?? null,
-    lessons: allLessons.filter((l) => l.all_phases || (client.current_phase_id && l.phase_ids.includes(client.current_phase_id))),
+    // The database only returns lessons this client may see; order personal ones first.
+    lessons: [...allLessons].sort((a, b) => Number((b.client_ids ?? []).includes(client.id)) - Number((a.client_ids ?? []).includes(client.id))),
   };
 }
 

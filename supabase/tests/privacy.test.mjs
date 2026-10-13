@@ -191,5 +191,23 @@ await expect('invite page shows practice colors', async () => {
   const r = await as(null, 'select bg_color from invite_preview($1)', [cB.invite_code]); return r.rows[0].bg_color === '#F4F6F5';
 });
 
+// lessons for specific clients / phases
+const cA2 = (await as(U.ana, `insert into clients (practice_id, first_name) values ($1,'Second') returning id, invite_code`, [pA])).rows[0];
+const U2 = '66666666-6666-6666-6666-666666666666';
+await db.query('insert into auth.users values ($1)', [U2]);
+await as(U2, 'select claim_invite($1)', [cA2.invite_code]);
+await as(U.ana, `insert into lessons (practice_id, title, published, all_phases, client_ids) values ($1,'Just for Cal',true,false,$2)`, [pA, [cA.id]]);
+const resetPhase = (await as(U.ana, `select id from template_phases where practice_id=$1 and position=1`, [pA])).rows[0];
+await as(U.ana, `update clients set current_phase_id=$1 where id=$2`, [resetPhase.id, cA2.id]);
+await as(U.ana, `insert into lessons (practice_id, title, published, all_phases, phase_ids) values ($1,'Reset only',true,false,$2)`, [pA, [resetPhase.id]]);
+await expect('client sees lesson shared with them', async () =>
+  (await as(U.cal, `select title from lessons where title='Just for Cal'`)).rows.length === 1);
+await blocked('other client cannot read a lesson shared with someone else', () => as(U2, `select title from lessons where title='Just for Cal'`));
+await expect('client in the phase sees the phase lesson', async () =>
+  (await as(U2, `select title from lessons where title='Reset only'`)).rows.length === 1);
+await blocked('client not in that phase cannot read the phase lesson', () => as(U.cal, `select title from lessons where title='Reset only'`));
+await as(U.ben, `insert into lessons (practice_id, title, published, all_phases, client_ids) values ($1,'B targets A client',true,false,$2)`, [pB, [cA.id]]);
+await blocked('another practice cannot push a lesson to your client', () => as(U.cal, `select title from lessons where title='B targets A client'`));
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

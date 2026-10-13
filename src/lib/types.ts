@@ -122,6 +122,7 @@ export type Lesson = {
   read_minutes: number | null;
   all_phases: boolean;
   phase_ids: string[];
+  client_ids: string[];
   published: boolean;
   updated_at: string;
 };

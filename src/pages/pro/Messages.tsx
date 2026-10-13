@@ -73,7 +73,7 @@ export function Messages() {
                 <Thread key={active.id} clientId={active.id} practiceId={practice.id} as="practitioner" placeholder={`Message ${active.first_name}`}
                   extraActions={data.lessons.length ? (insert) => (
                     <select className="input" style={{ width: 'auto' }} aria-label="Attach a lesson" value=""
-                      onChange={(e) => { const l = data.lessons.find((x) => x.id === e.target.value); if (l) insert(`Have a read: “${l.title}” (on your Home screen under “For this phase”)`); }}>
+                      onChange={(e) => { const l = data.lessons.find((x) => x.id === e.target.value); if (l) insert(`Have a read: “${l.title}” (on your Home screen under “For you to read”)`); }}>
                       <option value="">Attach lesson</option>
                       {data.lessons.map((l) => <option key={l.id} value={l.id}>{l.title}</option>)}
                     </select>

@@ -127,7 +127,7 @@ export function ClientHome() {
 
       {data.lessons.length > 0 && (
         <section className="card stack" style={{ gap: 4 }}>
-          <h3>For this phase</h3>
+          <h3>For you to read</h3>
           {data.lessons.slice(0, 4).map((l) => (
             <Link key={l.id} to={`/me/learn/${l.id}`} className="between" style={{ minHeight: 44, textDecoration: 'none', color: 'var(--ink)' }}>
               <span>{l.title}</span><span className="small muted">{l.read_minutes ? `${l.read_minutes} min` : ''} →</span>
